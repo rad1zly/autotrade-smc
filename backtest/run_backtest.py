@@ -80,6 +80,11 @@ def report(eng, m15, outdir, max_charts=150):
     tdf = pd.DataFrame(rows)
     tdf.to_csv(os.path.join(outdir, "trades.csv"), index=False, encoding="utf-8")
 
+    # setiap setup MSS-confirmed (traded ATAU skip) dgn alasan ASLI dari LLM —
+    # ini yang dipakai buat diagnosa kenapa brain menolak, bukan cuma tally count
+    sdf = pd.DataFrame(eng.setups)
+    sdf.to_csv(os.path.join(outdir, "setups.csv"), index=False, encoding="utf-8")
+
     lines = ["=== FUNNEL ==="]
     for k, v in eng.diag.items():
         lines.append(f"{k:16s}: {v}")

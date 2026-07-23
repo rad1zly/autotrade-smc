@@ -71,6 +71,8 @@ class SmcEngine:
         self.setup: Optional[Setup] = None
         self.diag = Counter()
         self.reject_reasons = Counter()
+        self.setups: list = []   # log LENGKAP tiap setup MSS-confirmed (traded ATAU skip),
+                                 # termasuk alasan asli LLM — bukan cuma tally count
 
     def _add_pool(self, level, kind, born_h1=0):
         self.pools.append(Pool(level, kind, born_h1))
@@ -270,15 +272,31 @@ def run_smc(m15: pd.DataFrame, cfg: SmcConfig, decide_fn: Callable[[dict], dict]
                         "min_rr": cfg.min_rr,
                     }
                     result = decide_fn(ctx)
+                    log_row = {
+                        "mss_time": t, "bias": ctx["bias"], "sweep_pool": s.pool_kind,
+                        "sweep_extreme": round(float(s.sweep_ext), cfg.digits),
+                        "mss_level": round(float(s.choch_level), cfg.digits),
+                        "llm_action": result.get("action", "?"),
+                        "confidence": result.get("confidence", 0),
+                        "sl": result.get("sl", 0), "tp": result.get("tp", 0),
+                        "rr": round(result.get("rr", 0.0), 2),
+                        "valid": result.get("valid", False),
+                        "note": result.get("note", ""),
+                        "reason": result.get("reason", ""),
+                        "traded": False,
+                    }
                     if not result.get("valid"):
                         eng.diag["brain_reject"] += 1
                         eng.reject_reasons[result.get("note", "?")] += 1
+                        eng.setups.append(log_row)
                     else:
                         entry = float(O[m + 1]) + (cfg.spread if s.direction > 0 else 0.0)
                         risk = abs(entry - result["sl"])
                         if risk <= 0:
                             eng.diag["brain_reject"] += 1
                             eng.reject_reasons["risk<=0 di entry aktual"] += 1
+                            log_row["note"] = "risk<=0 di entry aktual"
+                            eng.setups.append(log_row)
                         else:
                             rr_target = abs(result["tp"] - entry) / risk
                             eng.open_trade = Trade(
@@ -289,6 +307,8 @@ def run_smc(m15: pd.DataFrame, cfg: SmcConfig, decide_fn: Callable[[dict], dict]
                                 rr_target=rr_target, confirm="llm",
                                 confidence=result.get("confidence", 0),
                                 reason=result.get("reason", ""))
+                            log_row["traded"] = True
+                            eng.setups.append(log_row)
                             eng.diag["entries"] += 1
                 eng.setup = None
 
