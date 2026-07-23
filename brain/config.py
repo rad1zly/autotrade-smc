@@ -25,8 +25,9 @@ class BrainConfig:
     min_confidence: int = 70
     min_rr: float = 2.0
     max_sl_atr: float = 5.0
-    timeout_s: int = 30
-    max_tokens: int = 400
+    timeout_s: int = 60
+    max_tokens: int = 3000       # model reasoning (mis. MiniMax-M2) pakai banyak token
+                                 # di <think> sebelum jawaban JSON final
 
 
 def load_config() -> BrainConfig:
@@ -40,6 +41,6 @@ def load_config() -> BrainConfig:
         min_confidence=int(os.getenv("PAF_MIN_CONFIDENCE", "70")),
         min_rr=float(os.getenv("PAF_MIN_RR", "2.0")),
         max_sl_atr=float(os.getenv("PAF_MAX_SL_ATR", "5.0")),
-        timeout_s=int(os.getenv("PAF_LLM_TIMEOUT_S", "30")),
-        max_tokens=int(os.getenv("PAF_LLM_MAX_TOKENS", "400")),
+        timeout_s=int(os.getenv("PAF_LLM_TIMEOUT_S", "60")),
+        max_tokens=int(os.getenv("PAF_LLM_MAX_TOKENS", "3000")),
     )

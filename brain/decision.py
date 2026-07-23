@@ -66,12 +66,20 @@ def build_user_prompt(ctx: dict, min_rr: float) -> str:
 
 
 _JSON_RE = re.compile(r"\{.*\}", re.DOTALL)
+_THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
 
 
 def parse_decision(text: str) -> dict:
-    m = _JSON_RE.search(text)
+    # Model reasoning (mis. MiniMax-M2) menaruh chain-of-thought di <think>...</think>
+    # sebelum jawaban final — buang dulu supaya tidak ikut ke-scan cari JSON.
+    stripped = _THINK_RE.sub("", text)
+    m = _JSON_RE.search(stripped)
     if not m:
-        raise ValueError(f"tidak ada JSON di respons: {text[:200]}")
+        if "<think>" in text.lower() and "</think>" not in text.lower():
+            raise ValueError(
+                "respons terpotong di tengah <think> (reasoning model butuh token lebih "
+                f"banyak) — naikkan PAF_LLM_MAX_TOKENS di .env. Potongan: {text[:200]}")
+        raise ValueError(f"tidak ada JSON di respons: {stripped[:200]}")
     obj = json.loads(m.group(0))
     action = str(obj.get("action", "")).upper()
     if action not in ("BUY", "SELL", "SKIP"):

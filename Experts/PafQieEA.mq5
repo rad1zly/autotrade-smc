@@ -42,7 +42,7 @@ input int              InpMaxSwingPools  = 6;            // H1 swing pools per s
 input group "=== LLM Brain (bridge Python) ==="
 input string           InpBrainUrl       = "http://127.0.0.1:8787/decide"; // brain/server.py endpoint
 input int              InpMinConfidence  = 70;           // execute only at/above this (EA-side re-check)
-input int              InpTimeoutMs      = 20000;        // WebRequest timeout
+input int              InpTimeoutMs      = 60000;        // WebRequest timeout (model reasoning perlu waktu lebih lama)
 input int              InpCtxBars        = 40;           // candles sent as context
 input bool             InpLogJournal     = true;         // log decisions to CSV
 input bool             InpPushNotif      = false;        // push notification on decision
