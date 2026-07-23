@@ -59,43 +59,69 @@ string PafTrendFromSwings(const SSwing &sw[], int n)
    return "RANGING";
   }
 
-// After a sweep, look for a close beyond the nearest opposing swing (CHoCH/MSS).
-// BSL swept -> bearish MSS = close below last swing low formed before the sweep.
-bool PafDetectMss(const string sym, ENUM_TIMEFRAMES tf, const SSweep &sweep,
-                  const SSwing &sw[], int n, int windowBars, SMss &mss)
+// Replay struktur swing dari histori (stateless, dihitung ulang tiap panggilan
+// -- konsisten dengan gaya PafFindSwings/PafBuildPools yang juga rebuild tiap
+// bar baru) buat cari bias & level referensi TERKINI, dan apakah MSS (bias
+// flip) baru saja terjadi PERSIS di bar shift 1 (bar yang baru close).
+//
+// Bias awal ditentukan dari swing (high/low) mana yang confirmed paling akhir.
+// Selama bias bullish, refLow (swing low confirmed terbaru) itu yang "dijaga":
+// close < refLow -> bearish MSS, bias flip. Simetris utk bias bearish & refHigh.
+// Swing SEARAH bias (bikin high/low baru yang lebih ekstrem) itu BOS/lanjutan,
+// bukan reversal -- cuma update level referensi, TIDAK memicu MSS.
+bool PafComputeStructure(const string sym, ENUM_TIMEFRAMES tf, int lookback, int k,
+                         double &outRefHigh, double &outRefLow, bool &outBias, SMss &mss)
   {
    mss.confirmed = false;
-   if(!sweep.valid)
-      return false;
-   bool wantBull = !sweep.buySideSwept; // SSL swept -> bullish MSS
-
-   // nearest opposing swing formed before the sweep bar
-   double level = 0;
-   for(int i = n - 1; i >= 0; i--)
-     {
-      if(sw[i].bar <= sweep.bar)
-         continue;                       // formed at/after sweep
-      if(wantBull && sw[i].isHigh)  { level = sw[i].price; break; }
-      if(!wantBull && !sw[i].isHigh){ level = sw[i].price; break; }
-     }
-   if(level <= 0)
+   int bars = Bars(sym, tf);
+   if(bars < lookback + k + 2)
+      lookback = bars - k - 2;
+   if(lookback <= k + 1)
       return false;
 
-   int from = sweep.bar - 1;
-   int to   = MathMax(1, sweep.bar - windowBars);
-   for(int s = from; s >= to; s--)
+   bool   biasSet = false, bias = false;
+   bool   highSet = false, lowSet = false;
+   double refHigh = 0, refLow = 0;
+
+   for(int i = lookback; i >= 1; i--)
      {
-      double c = iClose(sym, tf, s);
-      if((wantBull && c > level) || (!wantBull && c < level))
+      int j = i + k; // kandidat swing yang baru confirmed persis saat proses sampai bar i
+      if(j + k <= bars - 1)
         {
-         mss.confirmed = true;
-         mss.bullish   = wantBull;
-         mss.level     = level;
-         mss.time      = iTime(sym, tf, s);
-         return true;
+         double hj = iHigh(sym, tf, j), lj = iLow(sym, tf, j);
+         bool isHigh = true, isLow = true;
+         for(int m = 1; m <= k && (isHigh || isLow); m++)
+           {
+            if(hj <= iHigh(sym, tf, j + m) || hj < iHigh(sym, tf, j - m)) isHigh = false;
+            if(lj >= iLow(sym, tf, j + m) || lj > iLow(sym, tf, j - m))   isLow = false;
+           }
+         if(isHigh)
+           {
+            refHigh = hj; highSet = true;
+            if(!biasSet && lowSet) { bias = false; biasSet = true; } // high paling baru -> bearish
+           }
+         if(isLow)
+           {
+            refLow = lj; lowSet = true;
+            if(!biasSet && highSet) { bias = true; biasSet = true; } // low paling baru -> bullish
+           }
+        }
+
+      double c = iClose(sym, tf, i);
+      if(biasSet && bias && lowSet && c < refLow)
+        {
+         bias = false;
+         if(i == 1) { mss.confirmed = true; mss.bullish = false; mss.level = refLow; mss.time = iTime(sym, tf, i); }
+        }
+      else if(biasSet && !bias && highSet && c > refHigh)
+        {
+         bias = true;
+         if(i == 1) { mss.confirmed = true; mss.bullish = true; mss.level = refHigh; mss.time = iTime(sym, tf, i); }
         }
      }
-   return false;
+
+   outRefHigh = refHigh; outRefLow = refLow; outBias = bias;
+   return mss.confirmed;
   }
 
 // Most recent FVG in MSS direction, formed at/after the sweep bar

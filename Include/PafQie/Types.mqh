@@ -6,11 +6,9 @@
 
 enum ENUM_PAF_STATE
   {
-   PAF_SEARCHING = 0,
-   PAF_LIQUIDITY_FOUND,
-   PAF_SWEEP_DETECTED,
-   PAF_WAIT_MSS,
-   PAF_ENTRY_READY,
+   PAF_SEARCHING = 0,   // histori swing belum cukup buat nentuin bias
+   PAF_TRACKING,        // bias sudah ada, nunggu break level referensi
+   PAF_ENTRY_READY,     // MSS baru saja confirmed, sedang tanya otak
    PAF_TRADE_ACTIVE,
    PAF_COOLDOWN
   };
@@ -19,13 +17,11 @@ string PafStateName(ENUM_PAF_STATE s)
   {
    switch(s)
      {
-      case PAF_SEARCHING:       return "SEARCHING";
-      case PAF_LIQUIDITY_FOUND: return "LIQUIDITY FOUND";
-      case PAF_SWEEP_DETECTED:  return "SWEEP DETECTED";
-      case PAF_WAIT_MSS:        return "WAIT MSS";
-      case PAF_ENTRY_READY:     return "ENTRY READY";
-      case PAF_TRADE_ACTIVE:    return "TRADE ACTIVE";
-      case PAF_COOLDOWN:        return "COOLDOWN";
+      case PAF_SEARCHING:    return "SEARCHING";
+      case PAF_TRACKING:     return "TRACKING";
+      case PAF_ENTRY_READY:  return "ENTRY READY";
+      case PAF_TRADE_ACTIVE: return "TRADE ACTIVE";
+      case PAF_COOLDOWN:     return "COOLDOWN";
      }
    return "?";
   }
@@ -47,24 +43,15 @@ struct SPool
    string            origin;   // "PDH","PDL","ASIA-H","ASIA-L","SWING-H","SWING-L"
   };
 
-// Detected liquidity sweep
-struct SSweep
-  {
-   bool              valid;
-   bool              buySideSwept; // true: BSL swept (bearish bias), false: SSL swept (bullish bias)
-   double            poolPrice;
-   double            extreme;      // wick extreme of the sweep bar
-   datetime          time;
-   int               bar;          // shift at scan time
-   string            origin;
-  };
-
-// Market Structure Shift after a sweep
+// Market Structure Shift: close menembus level swing referensi (high/low
+// paling baru confirmed yang berlawanan dengan bias saat ini) -> bias flip.
+// TIDAK butuh sweep pool eksternal dulu — swing/structure-nya sendiri yang
+// jadi "sweep" di skala itu.
 struct SMss
   {
    bool              confirmed;
    bool              bullish;
-   double            level;    // broken swing level
+   double            level;    // level swing yang baru saja ditembus
    datetime          time;
   };
 

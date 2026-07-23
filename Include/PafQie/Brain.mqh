@@ -103,7 +103,7 @@ bool PafJsonGetBool(const string src, const string key, bool fallback = false)
 string PafBuildDecideRequest(const string sym, ENUM_TIMEFRAMES tf,
                              double bid, double ask, double atr,
                              const string trend, const string bias,
-                             const SSweep &sweep, const SMss &mss, const SFvg &fvg,
+                             const SMss &mss, const SFvg &fvg,
                              const SPool &pools[], int nPools,
                              int ctxBars, double minRR)
   {
@@ -117,11 +117,13 @@ string PafBuildDecideRequest(const string sym, ENUM_TIMEFRAMES tf,
    s += "\"trend\":\"" + trend + "\",\"bias\":\"" + bias + "\",";
    s += "\"min_rr\":" + DoubleToString(minRR, 2) + ",";
 
-   s += "\"sweep\":{\"origin\":\"" + sweep.origin + "\","
-        + "\"side\":\"" + (sweep.buySideSwept ? "BSL" : "SSL") + "\","
-        + "\"extreme\":" + DoubleToString(sweep.extreme, dg) + ","
-        + "\"poolPrice\":" + DoubleToString(sweep.poolPrice, dg) + ","
-        + "\"time\":\"" + TimeToString(sweep.time) + "\"},";
+   // "sweep" = level swing structure yang baru saja ditembus (bukan pool eksternal) --
+   // sama persis dengan mss.level, dipakai brain/decision.py buat validasi SL.
+   s += "\"sweep\":{\"origin\":\"" + (string)(mss.bullish ? "SWING-H" : "SWING-L") + "\","
+        + "\"side\":\"" + (string)(mss.bullish ? "HIGH" : "LOW") + "\","
+        + "\"extreme\":" + DoubleToString(mss.level, dg) + ","
+        + "\"poolPrice\":" + DoubleToString(mss.level, dg) + ","
+        + "\"time\":\"" + TimeToString(mss.time) + "\"},";
 
    s += "\"mss\":{\"dir\":\"" + (string)(mss.bullish ? "BULLISH" : "BEARISH") + "\","
         + "\"level\":" + DoubleToString(mss.level, dg) + ","

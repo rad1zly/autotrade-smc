@@ -72,6 +72,56 @@ def resample(df: pd.DataFrame, rule: str) -> pd.DataFrame:
     return out
 
 
+def compute_structure(H: np.ndarray, L: np.ndarray, C: np.ndarray, swing_n: int):
+    """Tracking struktur swing yang berkelanjutan (BUKAN sweep-pool-dulu-baru-MSS).
+
+    MSS = close menembus level swing BERLAWANAN yang paling baru confirmed
+    (bukan sembarang swing terbaru — levelnya cuma flip saat benar-benar
+    ditembus, supaya breakout lanjutan/BOS searah bias tidak salah kebaca
+    sebagai reversal). Bias awal ditentukan dari swing MANA (high/low) yang
+    confirmed paling akhir begitu keduanya sudah pernah terbentuk.
+
+    Return:
+      bias[i]     : True=bullish, False=bearish, None=belum ada bias (list, per bar)
+      ref_high[i] : level swing high aktif saat itu (None kalau belum ada)
+      ref_low[i]  : level swing low aktif saat itu (None kalau belum ada)
+      mss_events  : list (bar, bullish, level) - tiap kali bias flip (break confirmed)
+    """
+    n = len(C)
+    bias_arr = [None] * n
+    ref_high_arr = [None] * n
+    ref_low_arr = [None] * n
+    mss_events = []
+
+    cur_high = cur_low = None
+    bias = None
+
+    for i in range(n):
+        j = i - swing_n
+        if j >= swing_n:
+            if all(H[j] > H[j - k] and H[j] > H[j + k] for k in range(1, swing_n + 1)):
+                cur_high = float(H[j])
+                if bias is None and cur_low is not None:
+                    bias = False   # swing high paling baru confirmed -> bias bearish
+            if all(L[j] < L[j - k] and L[j] < L[j + k] for k in range(1, swing_n + 1)):
+                cur_low = float(L[j])
+                if bias is None and cur_high is not None:
+                    bias = True    # swing low paling baru confirmed -> bias bullish
+
+        if bias is True and cur_low is not None and C[i] < cur_low:
+            mss_events.append((i, False, cur_low))
+            bias = False
+        elif bias is False and cur_high is not None and C[i] > cur_high:
+            mss_events.append((i, True, cur_high))
+            bias = True
+
+        bias_arr[i] = bias
+        ref_high_arr[i] = cur_high
+        ref_low_arr[i] = cur_low
+
+    return bias_arr, ref_high_arr, ref_low_arr, mss_events
+
+
 def atr_map(m15: pd.DataFrame, rule: str, period: int) -> np.ndarray:
     """ATR dihitung di TF `rule`, dipetakan balik ke tiap bar M15 (bar TF
     terakhir yang sudah close saat itu — tanpa lookahead)."""

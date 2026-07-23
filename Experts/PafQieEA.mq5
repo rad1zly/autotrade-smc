@@ -1,13 +1,15 @@
 //+------------------------------------------------------------------+
 //|                                                     PafQieEA.mq5 |
 //|  PAF-QIE — Prof AF Quantum Institutional Engine                  |
-//|  SMC state machine (liquidity -> sweep -> MSS) detects setups;   |
-//|  a local Python bridge (brain/server.py) runs the LLM decision   |
-//|  brain (Minimax/Anthropic/...) for BUY/SELL/SKIP + discretionary |
-//|  SL/TP. This EA never talks to the LLM provider directly.       |
+//|  Continuous structure/bias tracking detects MSS (close breaks    |
+//|  the most recent opposing swing) -- no external liquidity sweep  |
+//|  precondition. Pools (PDH/PDL/Asia/swing H1) are TP-target       |
+//|  candidates only. A local Python bridge (brain/server.py) runs   |
+//|  the LLM decision brain (Minimax/Anthropic/...) for BUY/SELL/SKIP|
+//|  + discretionary SL/TP. This EA never talks to the LLM directly. |
 //+------------------------------------------------------------------+
 #property copyright "PAF-QIE Team"
-#property version   "0.20"
+#property version   "0.30"
 
 #include <PafQie/Types.mqh>
 #include <PafQie/Structure.mqh>
@@ -29,8 +31,7 @@ input int              InpCooldownBars   = 12;           // bars between LLM dec
 input group "=== Structure ==="
 input int              InpSwingK         = 3;            // fractal strength (bars each side)
 input int              InpLookback       = 200;          // swing scan depth (entry TF)
-input int              InpMssWindow      = 16;           // bars after sweep to allow MSS
-input int              InpSweepLookback  = 24;           // bars to scan for sweeps
+input int              InpFvgLookback    = 20;            // bars before MSS to search for FVG (context only)
 input double           InpMaxSlAtr       = 5.0;          // reject SL wider than this x ATR
 
 input group "=== Liquidity ==="
@@ -100,22 +101,22 @@ double Atr(int period = 14)
   }
 
 //+------------------------------------------------------------------+
-//| Chart markers: sweep arrow, MSS line, FVG box                    |
+//| Chart markers: broken structure level (MSS) + FVG box            |
 //+------------------------------------------------------------------+
-void MarkSetup(const SSweep &sweep, const SMss &mss, const SFvg &fvg)
+void MarkSetup(const SMss &mss, const SFvg &fvg)
   {
    string p = "PAFQIE_MK_";
-   string an = p + "sweep_" + TimeToString(sweep.time);
+   string an = p + "mss_arrow_" + TimeToString(mss.time);
    if(ObjectFind(0, an) < 0)
      {
-      ObjectCreate(0, an, OBJ_ARROW, 0, sweep.time, sweep.extreme);
-      ObjectSetInteger(0, an, OBJPROP_ARROWCODE, sweep.buySideSwept ? 234 : 233);
+      ObjectCreate(0, an, OBJ_ARROW, 0, mss.time, mss.level);
+      ObjectSetInteger(0, an, OBJPROP_ARROWCODE, mss.bullish ? 233 : 234);
       ObjectSetInteger(0, an, OBJPROP_COLOR, PAF_CLR_MAGENTA);
      }
-   string ln = p + "mss_" + TimeToString(mss.time);
-   if(mss.confirmed && ObjectFind(0, ln) < 0)
+   string ln = p + "mss_line_" + TimeToString(mss.time);
+   if(ObjectFind(0, ln) < 0)
      {
-      ObjectCreate(0, ln, OBJ_TREND, 0, sweep.time, mss.level, mss.time, mss.level);
+      ObjectCreate(0, ln, OBJ_TREND, 0, mss.time, mss.level, iTime(g_symbol, InpEntryTF, 0), mss.level);
       ObjectSetInteger(0, ln, OBJPROP_COLOR, PAF_CLR_GOLD);
       ObjectSetInteger(0, ln, OBJPROP_STYLE, STYLE_DASH);
      }
@@ -150,14 +151,14 @@ void Journal(string bias, const SDecision &d, double entry, double rr, bool exec
 //+------------------------------------------------------------------+
 //| Ask the LLM about a confirmed setup, validate, maybe execute     |
 //+------------------------------------------------------------------+
-void AskBrainAndDecide(const SSweep &sweep, const SMss &mss, const SFvg &fvg,
+void AskBrainAndDecide(const SMss &mss, const SFvg &fvg,
                        const SPool &pools[], int nPools, string trend, double atr)
   {
    string bias = mss.bullish ? "BUY" : "SELL";
    double bid  = SymbolInfoDouble(g_symbol, SYMBOL_BID);
    double ask  = SymbolInfoDouble(g_symbol, SYMBOL_ASK);
    string reqJson = PafBuildDecideRequest(g_symbol, InpEntryTF, bid, ask, atr, trend, bias,
-                                          sweep, mss, fvg, pools, nPools, InpCtxBars, InpMinRR);
+                                          mss, fvg, pools, nPools, InpCtxBars, InpMinRR);
    string respJson, err;
 
    g_llmStatus = "THINKING...";
@@ -245,10 +246,8 @@ void OnTick()
       return;
 
    //--- rebuild picture
-   SSwing swE[], swH[];
-   int nE = PafFindSwings(g_symbol, InpEntryTF, InpLookback, InpSwingK, swE);
+   SSwing swH[];
    int nH = PafFindSwings(g_symbol, PERIOD_H1, 150, InpSwingK, swH);
-   string trendE = PafTrendFromSwings(swE, nE);
    string trendH = PafTrendFromSwings(swH, nH);
    double atr = Atr();
 
@@ -256,17 +255,15 @@ void OnTick()
    int nPools = PafBuildPools(g_symbol, InpEntryTF, InpUseAsia, InpAsiaStart, InpAsiaEnd,
                               swH, nH, InpMaxSwingPools, pools);
 
-   SSweep sweep;
-   PafDetectSweep(g_symbol, InpEntryTF, pools, nPools, InpSweepLookback, sweep);
+   double refHigh, refLow; bool bias;
+   SMss mss;
+   bool justFlipped = PafComputeStructure(g_symbol, InpEntryTF, InpLookback, InpSwingK,
+                                          refHigh, refLow, bias, mss);
+   bool hasBias = (refHigh > 0 && refLow > 0);
 
-   SMss mss; mss.confirmed = false;
    SFvg fvg; fvg.valid = false;
-   if(sweep.valid)
-     {
-      PafDetectMss(g_symbol, InpEntryTF, sweep, swE, nE, InpMssWindow, mss);
-      if(mss.confirmed)
-         PafFindFvg(g_symbol, InpEntryTF, mss.bullish, sweep.bar, fvg);
-     }
+   if(justFlipped)
+      PafFindFvg(g_symbol, InpEntryTF, mss.bullish, InpFvgLookback, fvg);
 
    //--- state
    bool inTrade = (g_exec.CountOpen(g_symbol) > 0);
@@ -274,48 +271,39 @@ void OnTick()
         (int)((iTime(g_symbol, InpEntryTF, 0) - g_lastDecisionAt) / PeriodSeconds(InpEntryTF));
 
    ENUM_PAF_STATE state = PAF_SEARCHING;
-   if(nPools > 0)                 state = PAF_LIQUIDITY_FOUND;
-   if(sweep.valid)                state = PAF_SWEEP_DETECTED;
-   if(sweep.valid && !mss.confirmed && sweep.bar <= InpMssWindow)
-                                  state = PAF_WAIT_MSS;
-   if(mss.confirmed)              state = PAF_ENTRY_READY;
+   if(hasBias)                    state = PAF_TRACKING;
+   if(justFlipped)                state = PAF_ENTRY_READY;
    if(barsSinceDecision < InpCooldownBars) state = PAF_COOLDOWN;
    if(inTrade)                    state = PAF_TRADE_ACTIVE;
 
-   if(mss.confirmed)
-      MarkSetup(sweep, mss, fvg);
+   if(justFlipped)
+      MarkSetup(mss, fvg);
 
-   //--- brain trigger: confirmed setup, not yet asked, no trade, no cooldown
-   if(mss.confirmed && !inTrade && mss.time != g_lastAskedMss
+   //--- brain trigger: MSS just flipped this bar, not yet asked, no trade, no cooldown
+   if(justFlipped && !inTrade && mss.time != g_lastAskedMss
       && barsSinceDecision >= InpCooldownBars)
      {
       g_lastAskedMss = mss.time;
-      AskBrainAndDecide(sweep, mss, fvg, pools, nPools, trendE, atr);
+      AskBrainAndDecide(mss, fvg, pools, nPools, trendH, atr);
       inTrade = (g_exec.CountOpen(g_symbol) > 0);
       if(inTrade)
          state = PAF_TRADE_ACTIVE;
      }
 
    //--- dashboard
-   string liqTxt = "TRACKING " + IntegerToString(nPools);
-   color  liqClr = PAF_CLR_GRAY;
-   if(sweep.valid)
-     {
-      liqTxt = (sweep.buySideSwept ? "BSL SWEPT " : "SSL SWEPT ") + sweep.origin;
-      liqClr = PAF_CLR_MAGENTA;
-     }
+   string structTxt = hasBias ? (bias ? "BULLISH" : "BEARISH") : "-";
+   string liqTxt = "TP TARGETS " + IntegerToString(nPools);
+
    string mssTxt = "-"; color mssClr = PAF_CLR_GRAY;
-   if(mss.confirmed)
+   if(justFlipped)
      { mssTxt = mss.bullish ? "BULLISH CONFIRMED" : "BEARISH CONFIRMED";
        mssClr = mss.bullish ? PAF_CLR_GREEN : PAF_CLR_RED; }
-   else if(state == PAF_WAIT_MSS)
-     { mssTxt = "WAITING"; mssClr = PAF_CLR_GOLD; }
 
    string entryTxt = "-"; color entryClr = PAF_CLR_GRAY;
    if(g_llmStatus == "BUY")  { entryTxt = "BUY";  entryClr = PAF_CLR_GREEN; }
    if(g_llmStatus == "SELL") { entryTxt = "SELL"; entryClr = PAF_CLR_RED;  }
    if(g_llmStatus == "SKIP") { entryTxt = "SKIP"; entryClr = PAF_CLR_GRAY; }
 
-   g_dash.Update(trendH, trendE, liqTxt, liqClr, mssTxt, mssClr,
+   g_dash.Update(trendH, structTxt, liqTxt, PAF_CLR_GRAY, mssTxt, mssClr,
                  entryTxt, entryClr, state, g_lastConf, g_llmStatus, g_lastReason);
   }

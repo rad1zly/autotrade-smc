@@ -1,5 +1,7 @@
 //+------------------------------------------------------------------+
-//| PAF-QIE — liquidity pools (BSL/SSL) & sweep detection            |
+//| PAF-QIE — liquidity pools: kandidat target TP (magnet arah).     |
+//| BUKAN syarat entry — MSS (Structure.mqh) berdiri sendiri, tidak  |
+//| perlu pool ini di-sweep dulu.                                    |
 //+------------------------------------------------------------------+
 #ifndef PAFQIE_LIQUIDITY_MQH
 #define PAFQIE_LIQUIDITY_MQH
@@ -62,65 +64,6 @@ int PafBuildPools(const string sym, ENUM_TIMEFRAMES entryTf,
         { PafAddPool(pools, htfSwings[i].price, false, "SWING-L"); lc++; }
      }
    return ArraySize(pools);
-  }
-
-// Scan the last `lookback` entry-TF bars oldest->newest per pool.
-// First bar that pierces the pool decides: close back inside = sweep,
-// close beyond = pool broken (invalidated). Most recent sweep wins.
-bool PafDetectSweep(const string sym, ENUM_TIMEFRAMES tf,
-                    const SPool &pools[], int nPools, int lookback, SSweep &out)
-  {
-   out.valid = false;
-   int best = -1; // shift of best (most recent) sweep
-
-   for(int p = 0; p < nPools; p++)
-     {
-      for(int s = lookback; s >= 1; s--)
-        {
-         double hi = iHigh(sym, tf, s), lo = iLow(sym, tf, s), cl = iClose(sym, tf, s);
-         if(pools[p].buySide)
-           {
-            if(hi <= pools[p].price)
-               continue;
-            if(cl < pools[p].price && (best < 0 || s < best))
-              {
-               best = s;
-               out.valid = true; out.buySideSwept = true;
-               out.poolPrice = pools[p].price; out.extreme = hi;
-               out.time = iTime(sym, tf, s); out.bar = s; out.origin = pools[p].origin;
-              }
-            break; // first touch decides this pool
-           }
-         else
-           {
-            if(lo >= pools[p].price)
-               continue;
-            if(cl > pools[p].price && (best < 0 || s < best))
-              {
-               best = s;
-               out.valid = true; out.buySideSwept = false;
-               out.poolPrice = pools[p].price; out.extreme = lo;
-               out.time = iTime(sym, tf, s); out.bar = s; out.origin = pools[p].origin;
-              }
-            break;
-           }
-        }
-     }
-   return out.valid;
-  }
-
-// Nearest untouched pool on the opposite side of the trade = natural TP magnet
-double PafNearestOppositePool(const SPool &pools[], int nPools, bool tradeIsBuy, double refPrice)
-  {
-   double bestP = 0;
-   for(int p = 0; p < nPools; p++)
-     {
-      if(tradeIsBuy && pools[p].buySide && pools[p].price > refPrice)
-         if(bestP == 0 || pools[p].price < bestP) bestP = pools[p].price;
-      if(!tradeIsBuy && !pools[p].buySide && pools[p].price < refPrice)
-         if(bestP == 0 || pools[p].price > bestP) bestP = pools[p].price;
-     }
-   return bestP;
   }
 
 #endif // PAFQIE_LIQUIDITY_MQH

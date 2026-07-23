@@ -1,8 +1,9 @@
 # PAF-QIE — Prof AF Quantum Institutional Engine
 
-EA MT5 dengan engine deteksi Smart Money Concept + **otak keputusan LLM** yang
-jalan di Python (default: **Minimax**, bisa ganti Anthropic tinggal env var).
-Engine mendeteksi setup secara mekanis (liquidity → sweep → MSS), lalu **LLM yang
+EA MT5 dengan engine deteksi **market structure shift (MSS)** + **otak keputusan
+LLM** yang jalan di Python (default: **Minimax**, bisa ganti Anthropic tinggal env
+var). Engine men-track struktur swing high/low secara berkelanjutan — begitu harga
+close menembus swing berlawanan yang paling baru confirmed, itu MSS, dan **LLM yang
 memutuskan** BUY / SELL / SKIP beserta level SL & TP secara diskresioner — bukan
 hard rule. Karena otaknya di Python, strategi yang sama bisa **di-backtest** dengan
 data historis (CSV export MT5) sebelum dipakai live.
@@ -15,14 +16,14 @@ data historis (CSV export MT5) sebelum dipakai live.
 - **MetaTrader5 (Python library resmi) itu Windows-only** — tidak jalan native di
   Mac. Supaya bisa develop & backtest di Mac tanpa VM Windows, pembagian tugasnya:
   - **MQL5** (jalan di terminal MT5 kamu, di mana pun itu — Windows/VPS/Wine)
-    tetap yang deteksi struktur pasar (pool liquidity, sweep, MSS/CHoCH, FVG) dan
+    tetap yang deteksi struktur pasar (swing/bias/MSS, pool TP, FVG) dan
     **eksekusi order** — kode existing dipakai lagi, hanya bagian panggil-LLM
     yang diganti.
   - **Python** (jalan di Mac kamu) yang jadi **otak keputusan**: terima konteks
     setup dari EA lewat bridge HTTP lokal, susun prompt, panggil LLM (Minimax/
     Anthropic/lainnya), validasi (RR, confidence, lebar SL), balikin keputusan.
   - **Python juga** yang jalankan **backtest** — engine deteksi setup yang sama
-    persis (pool/sweep/MSS) dijalankan di atas CSV historis, lalu memanggil modul
+    persis (structure/MSS) dijalankan di atas CSV historis, lalu memanggil modul
     otak yang **sama** (bukan logic duplikat) untuk tiap setup confirmed.
 
 ```
@@ -31,31 +32,43 @@ brain/providers.py            — Minimax (OpenAI-compatible) & Anthropic, gampa
 brain/config.py               — baca .env (kunci API TIDAK PERNAH masuk ke MQL5)
 brain/server.py                — bridge HTTP lokal yang dipanggil EA (WebRequest)
 
-backtest/common.py            — util: load CSV MT5, resample, ATR
-backtest/smc_engine.py        — deteksi pool/sweep/MSS + panggil brain per setup
+backtest/common.py            — util: load CSV MT5, resample, ATR, compute_structure (MSS)
+backtest/smc_engine.py        — pool TP + deteksi MSS + panggil brain per setup
 backtest/run_backtest.py      — CLI: --mode mock (cepat, tanpa LLM) / --mode llm (sungguhan)
 
 Experts/PafQieEA.mq5           — state machine live + eksekusi order
 Include/PafQie/Types.mqh       — enum & struct bersama
-Include/PafQie/Structure.mqh   — swing fractal, trend, MSS/CHoCH, FVG
-Include/PafQie/Liquidity.mqh   — pool BSL/SSL (PDH/PDL, Asia range, swing H1) + sweep
+Include/PafQie/Structure.mqh   — swing fractal, trend H1, PafComputeStructure (MSS), FVG
+Include/PafQie/Liquidity.mqh   — pool TP target (PDH/PDL, Asia range, swing H1)
 Include/PafQie/Brain.mqh       — bangun JSON konteks, POST ke bridge Python, parse balasan
 Include/PafQie/Dashboard.mqh   — panel on-chart hitam-emas gaya PAF-QIE
 Include/PafQie/TradeExec.mqh   — lot sizing 1% risk (guard minLot), partial + BE
 ```
 
-## Alur (Institutional State Machine)
+## Alur — Market Structure Shift (MSS)
 
-SEARCHING → LIQUIDITY FOUND → SWEEP DETECTED → WAIT MSS → **ENTRY READY**
-→ *(otak dipanggil sekali per setup)* → TRADE ACTIVE → MANAGE (partial @1.5R + SL→BE).
+**MSS itu murni break structure, TIDAK butuh sweep pool liquidity eksternal dulu.**
+Swing high/low di-track terus-menerus (fractal-n bar). Bias (bullish/bearish)
+ditentukan dari swing mana yang confirmed paling akhir; level swing berlawanan
+yang paling baru ("referensi") itu yang dijaga. Begitu close menembus level
+referensi itu → bias flip → **MSS confirmed**. Kalau harga malah lanjut searah
+bias (bikin high/low baru yang lebih ekstrem) itu BOS/lanjutan, bukan reversal —
+tidak memicu apa pun, cuma update level referensi.
 
-Saat ENTRY READY: konteks (40 candle terakhir, ATR, spread, pool liquidity yang
-tersisa sebagai magnet TP, detail sweep & MSS) dikirim ke otak. Otak membalas
+Pool liquidity (PDH/PDL, Asia range, swing H1) **bukan** syarat entry — itu murni
+daftar kandidat **target TP** (magnet arah) yang dikirim sebagai konteks ke otak.
+
+SEARCHING → TRACKING (bias sudah ada) → **ENTRY READY** (MSS baru confirmed)
+→ *(otak dipanggil)* → TRADE ACTIVE → MANAGE (partial @1.5R + SL→BE).
+
+Saat ENTRY READY: konteks (40 candle terakhir, ATR, spread, pool TP, level yang
+baru ditembus) dikirim ke otak. Otak membalas
 `{"action","sl","tp","confidence","reason"}`. Eksekusi hanya jika lolos validasi
-(arah = bias, RR ≥ min, confidence ≥ min, lebar SL ≤ 5×ATR) — dicek **dua kali**:
-sekali di Python (brain/decision.py, sumber kebenaran tunggal, sama untuk live
-& backtest), sekali lagi di EA sebagai lapis kedua sebelum order sungguhan
-dikirim (jangan pernah percaya penuh ke server eksternal untuk uang beneran).
+(arah = bias, RR ≥ min, confidence ≥ min, lebar SL ≤ 5×ATR, **SL di luar level
+yang baru ditembus**) — dicek **dua kali**: sekali di Python (brain/decision.py,
+sumber kebenaran tunggal, sama untuk live & backtest), sekali lagi di EA sebagai
+lapis kedua sebelum order sungguhan dikirim (jangan pernah percaya penuh ke
+server eksternal untuk uang beneran).
 
 ## Setup — Backtest (Mac, tanpa MT5 sama sekali)
 
