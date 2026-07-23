@@ -118,13 +118,24 @@ def validate(decision: dict, ctx: dict, cfg: BrainConfig) -> dict:
         out.update(valid=False, note="level tidak sane vs entry", rr=0.0)
         return out
 
+    # SL harus di luar (atau tepat di) sweep extreme — bukan cuma andalan
+    # kepatuhan LLM ke system prompt. Toleransi kecil (2% ATR) buat celah numerik.
+    atr = ctx.get("atr", 0)
+    sweep_extreme = ctx.get("sweep", {}).get("extreme")
+    if sweep_extreme is not None:
+        tol = atr * 0.02
+        beyond = (decision["sl"] <= sweep_extreme + tol) if is_buy \
+            else (decision["sl"] >= sweep_extreme - tol)
+        if not beyond:
+            out.update(valid=False, note="SL tidak di luar sweep extreme", rr=0.0)
+            return out
+
     risk = abs(entry - decision["sl"])
     rr = abs(decision["tp"] - entry) / risk if risk > 0 else 0.0
     min_rr = ctx.get("min_rr", cfg.min_rr)
     if rr < min_rr:
         out.update(valid=False, note="RR < min", rr=rr)
         return out
-    atr = ctx.get("atr", 0)
     if atr > 0 and risk > cfg.max_sl_atr * atr:
         out.update(valid=False, note="SL terlalu lebar vs ATR", rr=rr)
         return out

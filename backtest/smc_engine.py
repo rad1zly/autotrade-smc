@@ -26,7 +26,7 @@ from common import Trade, resample, atr_map
 @dataclass
 class SmcConfig:
     swing_n_pool: int = 3
-    swing_n_struct: int = 2
+    swing_n_struct: int = 3     # samakan dgn InpSwingK EA live — 2 kelewat noisy
     pool_max_age_h1: int = 400
     mss_window: int = 16
     ctx_bars: int = 40
