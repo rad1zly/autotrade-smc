@@ -1,0 +1,12 @@
+.env
+__pycache__/
+*.pyc
+backtest/out_*/
+backtest/output*/
+.DS_Store
+.claude/
+
+# arsip: kode sumber lama disimpan, hasil chart/backtest lama tidak (cuma gambar, bukan kode)
+_archive/backtest/output_xauusd/
+_archive/backtest/output_pivot/
+_archive/backtest/smc_is/
