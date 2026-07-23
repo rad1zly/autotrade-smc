@@ -29,8 +29,13 @@ def _post_json(url: str, headers: dict, body: dict, timeout_s: int) -> dict:
     except urllib.error.HTTPError as e:
         detail = e.read().decode("utf-8", errors="replace")
         raise ProviderError(f"HTTP {e.code}: {detail[:400]}")
-    except urllib.error.URLError as e:
-        raise ProviderError(f"koneksi gagal: {e.reason}")
+    except OSError as e:
+        # Mencakup urllib.error.URLError, TimeoutError/socket.timeout, koneksi putus, dst.
+        # (semuanya turunan OSError) — satu setup gagal jangan sampai bikin crash
+        # backtest berjam-jam; biarkan decide() mengembalikan SKIP dengan alasan jelas.
+        raise ProviderError(
+            f"request gagal/timeout setelah {timeout_s}s ({e}) — kalau ini sering terjadi "
+            "setelah menaikkan max_tokens, naikkan juga PAF_LLM_TIMEOUT_S di .env")
 
 
 class MinimaxProvider:
