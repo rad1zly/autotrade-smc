@@ -19,10 +19,11 @@ void PafAddPool(SPool &pools[], double price, bool buySide, string origin)
    pools[n].origin = origin;
   }
 
-// Pools: previous-day H/L, Asia-session range, unswept H1 swing highs/lows
+// Pools: previous-day H/L, Asia-session range, swing entry-TF (SAMA timeframe
+// dengan entry, bukan H1 hardcoded) yang belum "consumed" (close belum lewat).
 int PafBuildPools(const string sym, ENUM_TIMEFRAMES entryTf,
                   bool useAsia, int asiaStartHour, int asiaEndHour,
-                  const SSwing &htfSwings[], int nSwings, int maxSwingPoolsPerSide,
+                  const SSwing &entrySwings[], int nSwings, int maxSwingPoolsPerSide,
                   SPool &pools[])
   {
    ArrayResize(pools, 0);
@@ -54,14 +55,27 @@ int PafBuildPools(const string sym, ENUM_TIMEFRAMES entryTf,
       if(al > 0) PafAddPool(pools, al, false, "ASIA-L");
      }
 
-   // Recent HTF swing highs/lows (newest first, capped per side)
+   // Recent entry-TF swing highs/lows (newest first, capped per side), buang
+   // yang sudah "consumed" -- close pernah lewat level itu sejak swing terbentuk.
    int hc = 0, lc = 0;
-   for(int i = nSwings - 1; i >= 0; i--)
+   for(int i = nSwings - 1; i >= 0 && (hc < maxSwingPoolsPerSide || lc < maxSwingPoolsPerSide); i--)
      {
-      if(htfSwings[i].isHigh && hc < maxSwingPoolsPerSide)
-        { PafAddPool(pools, htfSwings[i].price, true, "SWING-H"); hc++; }
-      if(!htfSwings[i].isHigh && lc < maxSwingPoolsPerSide)
-        { PafAddPool(pools, htfSwings[i].price, false, "SWING-L"); lc++; }
+      double price = entrySwings[i].price;
+      int    bar   = entrySwings[i].bar;
+      if(entrySwings[i].isHigh && hc < maxSwingPoolsPerSide)
+        {
+         bool consumed = false;
+         for(int s = bar - 1; s >= 1; s--)
+            if(iClose(sym, entryTf, s) > price) { consumed = true; break; }
+         if(!consumed) { PafAddPool(pools, price, true, "SWING-H"); hc++; }
+        }
+      if(!entrySwings[i].isHigh && lc < maxSwingPoolsPerSide)
+        {
+         bool consumed = false;
+         for(int s = bar - 1; s >= 1; s--)
+            if(iClose(sym, entryTf, s) < price) { consumed = true; break; }
+         if(!consumed) { PafAddPool(pools, price, false, "SWING-L"); lc++; }
+        }
      }
    return ArraySize(pools);
   }

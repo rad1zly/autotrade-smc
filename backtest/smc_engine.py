@@ -13,8 +13,11 @@ Alur (sama dengan EA MQL5 live, supaya backtest berarti):
                  di luar level yang baru saja ditembus itu.
   4. ENTRY     : market order di OPEN bar berikutnya (tanpa lookahead) kalau
                  brain valid & lolos gate (RR min, confidence min, dst).
-  Pool liquidity (PDH/PDL, Asia H/L, swing H1) TIDAK lagi jadi syarat entry —
-  itu murni daftar kandidat TP (magnet arah) yang dikirim sebagai konteks.
+  Pool liquidity (PDH/PDL, Asia H/L, swing TIMEFRAME ENTRY) TIDAK lagi jadi
+  syarat entry — itu murni daftar kandidat TP (magnet arah) yang dikirim
+  sebagai konteks. Swing pool-nya sengaja di timeframe YANG SAMA dengan entry
+  (bukan H1 hardcoded) — kalau entry di M5, target juga level M5, biar
+  skalanya konsisten (entry & exit di "bahasa" candle yang sama).
   Manajemen: partial di +`partial_at_rr`, SL ke BE, sisa lari ke TP brain.
 """
 from collections import Counter
@@ -28,9 +31,9 @@ from common import Trade, resample, atr_map, compute_structure
 
 @dataclass
 class SmcConfig:
-    swing_n_pool: int = 3        # fractal H1 buat pool TP (PDH/PDL/Asia/swing H1)
-    swing_n_struct: int = 3      # fractal entry-TF buat structure/MSS — samakan dgn InpSwingK EA live
-    pool_max_age_h1: int = 400
+    swing_n_struct: int = 3      # fractal entry-TF buat structure/MSS DAN pool TP — samakan dgn InpSwingK EA live
+    pool_max_age_bars: int = 300 # kadaluarsa pool swing (dlm bar entry-TF, bukan H1 lagi)
+    max_swing_pools: int = 6     # swing pool per sisi yg dikirim ke otak (paling baru)
     ctx_bars: int = 40
     min_rr: float = 2.0
     use_partial: bool = True
@@ -39,8 +42,6 @@ class SmcConfig:
     spread: float = 0.0
     cooldown_bars: int = 12
     atr_period: int = 14
-    exclude_pools: tuple = ()
-    long_only: bool = False
     digits: int = 2
     fvg_lookback: int = 20       # bar ke belakang dari bar MSS buat cari FVG (info tambahan, non-gating)
 
@@ -49,7 +50,7 @@ class SmcConfig:
 class Pool:
     level: float
     kind: str
-    born_h1: int = 0
+    born: int = 0        # bar entry-TF saat pool ini terbentuk
     consumed: bool = False
 
 
@@ -65,28 +66,45 @@ class SmcEngine:
         self.setups: list = []   # log LENGKAP tiap setup MSS-confirmed (traded ATAU skip),
                                  # termasuk alasan asli LLM — bukan cuma tally count
 
-    def _add_pool(self, level, kind, born_h1=0):
-        self.pools.append(Pool(level, kind, born_h1))
+    def _add_pool(self, level, kind, born=0):
+        self.pools.append(Pool(level, kind, born))
         self.diag["pools"] += 1
         if len(self.pools) > 150:
             self.pools = [p for p in self.pools if not p.consumed][-120:]
 
-    def _consume_through(self, close, h1_idx):
+    def _consume_through(self, close, cur_bar):
         cfg = self.cfg
         for p in self.pools:
             if p.consumed:
                 continue
-            if p.kind in ("SWH", "SWL") and h1_idx - p.born_h1 > cfg.pool_max_age_h1:
+            if p.kind in ("SWING-H", "SWING-L") and cur_bar - p.born > cfg.pool_max_age_bars:
                 p.consumed = True
                 continue
-            if p.kind in ("PDH", "ASIAH", "SWH") and close > p.level:
+            if p.kind in ("PDH", "ASIAH", "SWING-H") and close > p.level:
                 p.consumed = True
-            elif p.kind in ("PDL", "ASIAL", "SWL") and close < p.level:
+            elif p.kind in ("PDL", "ASIAL", "SWING-L") and close < p.level:
                 p.consumed = True
 
     def _pool_ctx(self):
-        return [{"origin": p.kind, "buySide": p.kind in ("PDH", "ASIAH", "SWH"),
-                 "price": p.level} for p in self.pools if not p.consumed]
+        max_n = self.cfg.max_swing_pools
+        hc = lc = 0
+        out = []
+        # proses dari yg PALING BARU dulu supaya cap per-sisi ambil swing terkini,
+        # bukan yg paling lama (self.pools tersusun kronologis, tambah = lebih baru)
+        for p in reversed(self.pools):
+            if p.consumed:
+                continue
+            if p.kind == "SWING-H":
+                if hc >= max_n:
+                    continue
+                hc += 1
+            elif p.kind == "SWING-L":
+                if lc >= max_n:
+                    continue
+                lc += 1
+            out.append({"origin": p.kind, "buySide": p.kind in ("PDH", "ASIAH", "SWING-H"),
+                       "price": p.level})
+        return out
 
     def _find_fvg(self, H, L, lo, hi, bullish):
         for k in range(hi, max(lo, 2) - 1, -1):
@@ -161,20 +179,17 @@ def run_smc(m15: pd.DataFrame, cfg: SmcConfig, decide_fn: Callable[[dict], dict]
     O = m15["open"].to_numpy(); H = m15["high"].to_numpy()
     L = m15["low"].to_numpy(); C = m15["close"].to_numpy()
 
-    _, _, _, mss_events = compute_structure(H, L, C, cfg.swing_n_struct)
+    _, _, _, mss_events, swings = compute_structure(H, L, C, cfg.swing_n_struct)
     mss_by_bar = {bar: (bullish, level) for bar, bullish, level in mss_events}
-
-    h1 = resample(m15, "1h")
-    h1_times = h1["time"].tolist()
-    h1H = h1["high"].to_numpy(); h1L = h1["low"].to_numpy()
-    n_pool = cfg.swing_n_pool
+    swings_by_bar = {}
+    for bar, price, is_high in swings:
+        swings_by_bar.setdefault(bar, []).append((price, is_high))
 
     daily = resample(m15, "1D")
     daily_map = {daily.at[i, "time"].normalize():
                  (daily.at[i - 1, "high"], daily.at[i - 1, "low"])
                  for i in range(1, len(daily))}
 
-    h1_idx = 0
     cur_day = None
     asia_done = False
     day_start_m = 0
@@ -199,26 +214,19 @@ def run_smc(m15: pd.DataFrame, cfg: SmcConfig, decide_fn: Callable[[dict], dict]
                 eng._add_pool(L[seg].min(), "ASIAL")
             asia_done = True
 
-        while h1_idx < len(h1_times) - 1 and t >= h1_times[h1_idx + 1]:
-            i = h1_idx
-            j = i - n_pool
-            if j >= n_pool:
-                if all(h1H[j] > h1H[j - k] and h1H[j] > h1H[j + k] for k in range(1, n_pool + 1)):
-                    eng._add_pool(h1H[j], "SWH", born_h1=i)
-                if all(h1L[j] < h1L[j - k] and h1L[j] < h1L[j + k] for k in range(1, n_pool + 1)):
-                    eng._add_pool(h1L[j], "SWL", born_h1=i)
-            h1_idx += 1
+        for price, is_high in swings_by_bar.get(m, []):
+            eng._add_pool(price, "SWING-H" if is_high else "SWING-L", born=m)
 
         if eng.open_trade is not None:
             eng._manage_open(times, H, L, m)
             if eng.open_trade is None:
                 last_close_m = m
-            eng._consume_through(C[m], h1_idx)
+            eng._consume_through(C[m], m)
             continue
 
         a = atr[m]
         if m < 30 or not np.isfinite(a) or a <= 0:
-            eng._consume_through(C[m], h1_idx)
+            eng._consume_through(C[m], m)
             continue
 
         event = mss_by_bar.get(m)
@@ -286,6 +294,6 @@ def run_smc(m15: pd.DataFrame, cfg: SmcConfig, decide_fn: Callable[[dict], dict]
                     eng.setups.append(log_row)
                     eng.diag["entries"] += 1
 
-        eng._consume_through(C[m], h1_idx)
+        eng._consume_through(C[m], m)
 
     return eng

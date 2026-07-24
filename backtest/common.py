@@ -86,12 +86,16 @@ def compute_structure(H: np.ndarray, L: np.ndarray, C: np.ndarray, swing_n: int)
       ref_high[i] : level swing high aktif saat itu (None kalau belum ada)
       ref_low[i]  : level swing low aktif saat itu (None kalau belum ada)
       mss_events  : list (bar, bullish, level) - tiap kali bias flip (break confirmed)
+      swings      : list (bar, price, is_high) - SEMUA swing confirmed, chronological.
+                    Dipakai jadi kandidat pool TP di timeframe YANG SAMA dgn entry
+                    (bukan H1 hardcoded) — konsumsi/validitasnya dicek terpisah oleh caller.
     """
     n = len(C)
     bias_arr = [None] * n
     ref_high_arr = [None] * n
     ref_low_arr = [None] * n
     mss_events = []
+    swings = []
 
     cur_high = cur_low = None
     bias = None
@@ -101,10 +105,12 @@ def compute_structure(H: np.ndarray, L: np.ndarray, C: np.ndarray, swing_n: int)
         if j >= swing_n:
             if all(H[j] > H[j - k] and H[j] > H[j + k] for k in range(1, swing_n + 1)):
                 cur_high = float(H[j])
+                swings.append((j, cur_high, True))
                 if bias is None and cur_low is not None:
                     bias = False   # swing high paling baru confirmed -> bias bearish
             if all(L[j] < L[j - k] and L[j] < L[j + k] for k in range(1, swing_n + 1)):
                 cur_low = float(L[j])
+                swings.append((j, cur_low, False))
                 if bias is None and cur_high is not None:
                     bias = True    # swing low paling baru confirmed -> bias bullish
 
@@ -119,7 +125,7 @@ def compute_structure(H: np.ndarray, L: np.ndarray, C: np.ndarray, swing_n: int)
         ref_high_arr[i] = cur_high
         ref_low_arr[i] = cur_low
 
-    return bias_arr, ref_high_arr, ref_low_arr, mss_events
+    return bias_arr, ref_high_arr, ref_low_arr, mss_events, swings
 
 
 def atr_map(m15: pd.DataFrame, rule: str, period: int) -> np.ndarray:

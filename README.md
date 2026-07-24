@@ -39,7 +39,7 @@ backtest/run_backtest.py      — CLI: --mode mock (cepat, tanpa LLM) / --mode l
 Experts/PafQieEA.mq5           — state machine live + eksekusi order
 Include/PafQie/Types.mqh       — enum & struct bersama
 Include/PafQie/Structure.mqh   — swing fractal, trend H1, PafComputeStructure (MSS), FVG
-Include/PafQie/Liquidity.mqh   — pool TP target (PDH/PDL, Asia range, swing H1)
+Include/PafQie/Liquidity.mqh   — pool TP target (PDH/PDL, Asia range, swing entry-TF)
 Include/PafQie/Brain.mqh       — bangun JSON konteks, POST ke bridge Python, parse balasan
 Include/PafQie/Dashboard.mqh   — panel on-chart hitam-emas gaya PAF-QIE
 Include/PafQie/TradeExec.mqh   — lot sizing 1% risk (guard minLot), partial + BE
@@ -55,8 +55,11 @@ referensi itu → bias flip → **MSS confirmed**. Kalau harga malah lanjut sear
 bias (bikin high/low baru yang lebih ekstrem) itu BOS/lanjutan, bukan reversal —
 tidak memicu apa pun, cuma update level referensi.
 
-Pool liquidity (PDH/PDL, Asia range, swing H1) **bukan** syarat entry — itu murni
-daftar kandidat **target TP** (magnet arah) yang dikirim sebagai konteks ke otak.
+Pool liquidity (PDH/PDL, Asia range, swing **entry-TF**) **bukan** syarat entry —
+itu murni daftar kandidat **target TP** (magnet arah) yang dikirim sebagai
+konteks ke otak. Swing pool-nya sengaja di timeframe YANG SAMA dengan entry
+(bukan H1 hardcoded) — kalau entry di M5, target juga level M5, biar skalanya
+konsisten (entry & exit "berbahasa" candle yang sama).
 
 SEARCHING → TRACKING (bias sudah ada) → **ENTRY READY** (MSS baru confirmed)
 → *(otak dipanggil)* → TRADE ACTIVE → MANAGE (partial @1.5R + SL→BE).

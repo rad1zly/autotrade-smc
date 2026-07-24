@@ -69,10 +69,17 @@ string PafTrendFromSwings(const SSwing &sw[], int n)
 // close < refLow -> bearish MSS, bias flip. Simetris utk bias bearish & refHigh.
 // Swing SEARAH bias (bikin high/low baru yang lebih ekstrem) itu BOS/lanjutan,
 // bukan reversal -- cuma update level referensi, TIDAK memicu MSS.
+//
+// outSwings[] diisi SEMUA swing confirmed yang ditemukan selama replay
+// (chronological, oldest first -- sama seperti PafFindSwings) supaya bisa
+// dipakai jadi kandidat pool TP di timeframe entry YANG SAMA (lihat
+// Liquidity.mqh:PafBuildPools), bukan H1 hardcoded.
 bool PafComputeStructure(const string sym, ENUM_TIMEFRAMES tf, int lookback, int k,
-                         double &outRefHigh, double &outRefLow, bool &outBias, SMss &mss)
+                         double &outRefHigh, double &outRefLow, bool &outBias, SMss &mss,
+                         SSwing &outSwings[])
   {
    mss.confirmed = false;
+   ArrayResize(outSwings, 0);
    int bars = Bars(sym, tf);
    if(bars < lookback + k + 2)
       lookback = bars - k - 2;
@@ -99,11 +106,19 @@ bool PafComputeStructure(const string sym, ENUM_TIMEFRAMES tf, int lookback, int
            {
             refHigh = hj; highSet = true;
             if(!biasSet && lowSet) { bias = false; biasSet = true; } // high paling baru -> bearish
+            int n = ArraySize(outSwings);
+            ArrayResize(outSwings, n + 1);
+            outSwings[n].time = iTime(sym, tf, j); outSwings[n].bar = j;
+            outSwings[n].price = hj; outSwings[n].isHigh = true;
            }
          if(isLow)
            {
             refLow = lj; lowSet = true;
             if(!biasSet && highSet) { bias = true; biasSet = true; } // low paling baru -> bullish
+            int n = ArraySize(outSwings);
+            ArrayResize(outSwings, n + 1);
+            outSwings[n].time = iTime(sym, tf, j); outSwings[n].bar = j;
+            outSwings[n].price = lj; outSwings[n].isHigh = false;
            }
         }
 

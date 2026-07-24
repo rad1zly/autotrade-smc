@@ -39,7 +39,7 @@ input group "=== Liquidity ==="
 input bool             InpUseAsia        = true;         // Asia range as pool
 input int              InpAsiaStart      = 0;            // Asia start hour (server)
 input int              InpAsiaEnd        = 7;            // Asia end hour (server)
-input int              InpMaxSwingPools  = 6;            // H1 swing pools per side
+input int              InpMaxSwingPools  = 6;            // swing pool per sisi (timeframe entry, bukan H1)
 
 input group "=== LLM Brain (bridge Python) ==="
 input string           InpBrainUrl       = "http://127.0.0.1:8787/decide"; // brain/server.py endpoint
@@ -249,20 +249,21 @@ void OnTick()
       return;
 
    //--- rebuild picture
-   SSwing swH[];
+   SSwing swH[]; // cuma buat info trend H1 di dashboard, TIDAK dipakai buat pool lagi
    int nH = PafFindSwings(g_symbol, PERIOD_H1, 150, InpSwingK, swH);
    string trendH = PafTrendFromSwings(swH, nH);
    double atr = Atr();
 
-   SPool pools[];
-   int nPools = PafBuildPools(g_symbol, InpEntryTF, InpUseAsia, InpAsiaStart, InpAsiaEnd,
-                              swH, nH, InpMaxSwingPools, pools);
-
    double refHigh, refLow; bool bias;
    SMss mss;
+   SSwing swE[]; // swing entry-TF -- dipakai buat structure/MSS DAN pool TP (timeframe sama)
    bool justFlipped = PafComputeStructure(g_symbol, InpEntryTF, InpLookback, InpSwingK,
-                                          refHigh, refLow, bias, mss);
+                                          refHigh, refLow, bias, mss, swE);
    bool hasBias = (refHigh > 0 && refLow > 0);
+
+   SPool pools[];
+   int nPools = PafBuildPools(g_symbol, InpEntryTF, InpUseAsia, InpAsiaStart, InpAsiaEnd,
+                              swE, ArraySize(swE), InpMaxSwingPools, pools);
 
    SFvg fvg; fvg.valid = false;
    if(justFlipped)
