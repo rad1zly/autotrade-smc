@@ -43,6 +43,7 @@ class SmcConfig:
     cooldown_bars: int = 12
     atr_period: int = 14
     digits: int = 2
+    tf_label: str = "M15"        # dikirim ke otak sbg konteks -- isi dgn timeframe CSV sebenarnya
     fvg_lookback: int = 20       # bar ke belakang dari bar MSS buat cari FVG (info tambahan, non-gating)
 
 
@@ -237,7 +238,7 @@ def run_smc(m15: pd.DataFrame, cfg: SmcConfig, decide_fn: Callable[[dict], dict]
             eng.diag["mss_ok"] += 1
             fvg = eng._find_fvg(H, L, max(0, m - cfg.fvg_lookback), m, bullish)
             ctx = {
-                "symbol": "BACKTEST", "tf": "M15", "time": str(t),
+                "symbol": "BACKTEST", "tf": cfg.tf_label, "time": str(t),
                 "digits": cfg.digits,
                 "bid": float(C[m]), "ask": float(C[m] + cfg.spread),
                 "atr": float(a),

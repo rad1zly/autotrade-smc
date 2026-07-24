@@ -61,6 +61,19 @@ def detect_point(df: pd.DataFrame) -> float:
     return 10.0 ** (-int(dec))
 
 
+def detect_timeframe_label(df: pd.DataFrame) -> str:
+    """Label timeframe (M1/M5/M15/M30/H1/H4/D1) dari median jarak antar bar --
+    dikirim ke otak LLM biar dia tahu skala candle yang sebenarnya (bukan
+    diasumsikan M15 padahal CSV-nya M5/M1/dst)."""
+    diffs = df["time"].diff().dropna()
+    if diffs.empty:
+        return "M15"
+    minutes = diffs.dt.total_seconds().median() / 60.0
+    table = [(1, "M1"), (5, "M5"), (15, "M15"), (30, "M30"),
+             (60, "H1"), (240, "H4"), (1440, "D1")]
+    return min(table, key=lambda kv: abs(kv[0] - minutes))[1]
+
+
 def resample(df: pd.DataFrame, rule: str) -> pd.DataFrame:
     g = df.set_index("time").resample(rule, label="left", closed="left")
     out = pd.DataFrame({

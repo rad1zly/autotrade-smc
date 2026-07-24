@@ -21,7 +21,7 @@ from matplotlib.patches import Rectangle
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from common import load_mt5_csv, detect_point
+from common import load_mt5_csv, detect_point, detect_timeframe_label
 from smc_engine import SmcConfig, run_smc
 
 
@@ -182,10 +182,12 @@ def main():
 
     if args.selftest:
         m15 = make_synthetic()
-        print(f"[selftest] data sintetis: {len(m15)} bar M15 ({m15['time'].iloc[0]} .. {m15['time'].iloc[-1]})")
+        tf_label = "M15"
+        print(f"[selftest] data sintetis: {len(m15)} bar {tf_label} ({m15['time'].iloc[0]} .. {m15['time'].iloc[-1]})")
     elif args.csv:
         m15 = load_mt5_csv(args.csv)
-        print(f"data: {len(m15)} bar M15 ({m15['time'].iloc[0]} .. {m15['time'].iloc[-1]})")
+        tf_label = detect_timeframe_label(m15)
+        print(f"data: {len(m15)} bar {tf_label} ({m15['time'].iloc[0]} .. {m15['time'].iloc[-1]})")
     else:
         ap.error("wajib --csv <file> atau --selftest")
 
@@ -215,7 +217,7 @@ def main():
         decide_fn = decide_mock
         print("mode MOCK: SL/TP rule-based (bukan LLM sungguhan) — hanya utk uji pipa/frekuensi setup.")
 
-    scfg = SmcConfig(spread=spread, min_rr=args.min_rr, digits=digits)
+    scfg = SmcConfig(spread=spread, min_rr=args.min_rr, digits=digits, tf_label=tf_label)
     eng = run_smc(m15, scfg, decide_fn)
     report(eng, m15, args.out, args.max_charts)
 
