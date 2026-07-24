@@ -32,6 +32,7 @@ input group "=== Structure ==="
 input int              InpSwingK         = 3;            // fractal strength (bars each side)
 input int              InpLookback       = 200;          // swing scan depth (entry TF)
 input int              InpFvgLookback    = 20;            // bars before MSS to search for FVG (context only)
+input double           InpMinSlAtr       = 0.5;          // reject SL narrower than this x ATR (noise-vulnerable)
 input double           InpMaxSlAtr       = 5.0;          // reject SL wider than this x ATR
 
 input group "=== Liquidity ==="
@@ -208,6 +209,8 @@ void AskBrainAndDecide(const SMss &mss, const SFvg &fvg,
       else if(rr < InpMinRR)             { ok = false; note = "RR < min (EA re-check)"; }
       else if(d.confidence < InpMinConfidence)
                                          { ok = false; note = "confidence < min (EA re-check)"; }
+      else if(atr > 0 && risk < InpMinSlAtr * atr)
+                                         { ok = false; note = "SL terlalu sempit vs ATR (EA re-check)"; }
       else if(atr > 0 && risk > InpMaxSlAtr * atr)
                                          { ok = false; note = "SL terlalu lebar vs ATR (EA re-check)"; }
      }

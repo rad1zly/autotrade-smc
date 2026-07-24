@@ -136,6 +136,9 @@ def validate(decision: dict, ctx: dict, cfg: BrainConfig) -> dict:
     if rr < min_rr:
         out.update(valid=False, note="RR < min", rr=rr)
         return out
+    if atr > 0 and risk < cfg.min_sl_atr * atr:
+        out.update(valid=False, note="SL terlalu sempit vs ATR", rr=rr)
+        return out
     if atr > 0 and risk > cfg.max_sl_atr * atr:
         out.update(valid=False, note="SL terlalu lebar vs ATR", rr=rr)
         return out
